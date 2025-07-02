@@ -10,13 +10,14 @@ import matlab.engine # type: ignore
 # --------------------------
 # Definir parâmetros
 snapshots = 10
-AoA       = matlab.double([-5, 23.22])
+AoA       = matlab.double([55, 23.22])
 dist      = matlab.double([9, 9])
 snr_dB    = 15
 K         = 2
 
 print("[INFO] Executando script MATLAB para gerar Y...")
 eng = matlab.engine.start_matlab()
+eng.addpath(r'MultiDeepNet_Datasets', nargout=0)
 eng.gera_Y(float(snapshots), AoA, dist, float(snr_dB), float(K), nargout=0)
 eng.quit()
 print("[INFO] Arquivo entrada_Y.mat gerado com sucesso.")
@@ -80,7 +81,10 @@ class CoarseCNN(nn.Module):
 # --------------------------
 print("[INFO] Carregando modelo coarseDOA_net.pth...")
 model = CoarseCNN(12)
-model.load_state_dict(torch.load('coarseDOA_net.pth', map_location='cpu'))
+
+model_path = r'MultiDeepNet/coarseDOA_net.pth'
+model.load_state_dict(torch.load(model_path, map_location='cpu'))
+#model.load_state_dict(torch.load('coarseDOA_net.pth', map_location='cpu'))
 model.eval()
 
 # --------------------------
@@ -109,7 +113,7 @@ plt.axhline(0.5, color='r', linestyle='--', label='Threshold 0.5')
 plt.xticks(setores)
 plt.xlabel('Ângulo (graus)')
 plt.ylabel('Probabilidade')
-plt.title('Saída coarseDOA por setor (–55° a +55°)')
+plt.title('Saída coarseDOA por setor (–60° a 60°)')
 plt.grid(True, axis='y', linestyle=':')
 plt.legend()
 plt.tight_layout()
