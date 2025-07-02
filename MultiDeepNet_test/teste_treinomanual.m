@@ -6,9 +6,9 @@ frequency = 78.737692e9;         % Frequência central f_c = 78.737692 GHz
 lambda    = 3e8 / frequency;     % Comprimento de onda (λ = c/f)
 delta     = lambda / 2;          % Espaçamento entre elementos: λ/2
 snapshots = 10;                  % Número de snapshots
-AoA       = 45;                  % Ângulo real de chegada (graus)
+AoA       = 15;                  % Ângulo real de chegada (graus)
 dist      = 9;                   % Distância real do usuário (mesma unidade de r)
-snr_dB    = 20;                  % SNR em dB
+snr_dB    = 0;                  % SNR em dB
 K         = 1;                   % Número de fontes
 
 %% 2. Geração do sinal

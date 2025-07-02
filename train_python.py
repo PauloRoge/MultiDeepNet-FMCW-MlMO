@@ -1,176 +1,173 @@
+import os
+import h5py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import scipy.io
 import numpy as np
-import os
 from glob import glob
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+# Plot da curva de perda
 import matplotlib.pyplot as plt
+import numpy as np
 
-# ----------------------- Configurações -----------------------
-torch.manual_seed(0)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Configurações
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+data_dir = os.path.join(os.getcwd(), 'datasets')
+files = sorted(glob(os.path.join(data_dir, 'dataset_coarse_SNR*.mat')))
+assert files, "Nenhum dataset encontrado."
 
+# Parâmetros
+num_classes = 12
 batch_size = 128
 num_epochs = 100
 val_freq = 200
-patience = 5
-learning_rate = 1e-3
-threshold = 0.5
-data_dir = './datasets'
-input_size = (10, 10, 3)
-num_classes = 12
+patience = 8
+lr = 5e-4
+weight_decay = 1e-4
 
-# --------------------- Carregar os dados ---------------------
-T_all, Y_all = [], []
+# Carregar e empilhar datasets
+X_all, Y_all = [], []
+for file in files:
+    with h5py.File(file, 'r') as f:
+        T = np.array(f['Tcoarse']).transpose(3, 2, 1, 0)  # [N, 3, 10, 10] → [10, 10, 3, N]
+        Y = np.array(f['Ylabel']).T  # [12, N]
+        X_all.append(T)
+        Y_all.append(Y)
+X_all = np.concatenate(X_all, axis=3)  # → [10, 10, 3, total]
+Y_all = np.concatenate(Y_all, axis=1)  # → [12, total]
 
-for file in sorted(glob(os.path.join(data_dir, 'dataset_coarse_SNR*.mat'))):
-    data = scipy.io.loadmat(file)
-    T_all.append(data['Tcoarse'])  # (10,10,3,N)
-    Y_all.append(data['Ylabel'])   # (12,N)
+# Separar treino/validação
+X = X_all.transpose(3, 2, 0, 1)  # → [N, 3, 10, 10]
+Y = Y_all.T                     # → [N, 12]
+X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.1, random_state=42)
 
-T_all = np.concatenate(T_all, axis=3).astype(np.float32)
-Y_all = np.concatenate(Y_all, axis=1).astype(np.float32)
+X_train = torch.tensor(X_train, dtype=torch.float32)
+Y_train = torch.tensor(Y_train, dtype=torch.float32)
+X_val   = torch.tensor(X_val, dtype=torch.float32)
+Y_val   = torch.tensor(Y_val, dtype=torch.float32)
 
-# Transpor para (N, 3, 10, 10)
-X = torch.tensor(T_all).permute(3, 2, 0, 1)
-Y = torch.tensor(Y_all).T
+print(f"Total={len(X)}  Treino={len(X_train)}  Validação={len(X_val)}")
 
-# Shuffle e split
-N = X.shape[0]
-idx = torch.randperm(N)
-N_train = int(0.9 * N)
+# Dataset/DataLoader
+train_dataset = torch.utils.data.TensorDataset(X_train, Y_train)
+val_dataset   = torch.utils.data.TensorDataset(X_val, Y_val)
+train_loader  = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader    = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size)
 
-X_train, Y_train = X[idx[:N_train]], Y[idx[:N_train]]
-X_val, Y_val     = X[idx[N_train:]], Y[idx[N_train:]]
-
-print(f"Total={N}  (treino={N_train}  validação={N - N_train})")
-
-# --------------------- Modelo CNN ---------------------
-class DOACNN(nn.Module):
-    def __init__(self):
+# CNN definida
+class CoarseCNN(nn.Module):
+    def __init__(self, num_classes):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.3),
-
-            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+        self.model = nn.Sequential(
+            nn.Conv2d(3, 128, 3, padding=1),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.3),
+            nn.Dropout(0.2),
 
-            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.Conv2d(128, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.3),
+            nn.Dropout(0.2),
+
+            nn.Conv2d(64, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.3),
+            nn.Dropout(0.2),
 
             nn.Flatten(),
-            nn.Linear(64 * 10 * 10, 2048),
+            nn.Linear(32*10*10, 1024),
             nn.ReLU(),
+            nn.Dropout(0.5),
 
-            nn.Linear(2048, 512),
+            nn.Linear(1024, 256),
             nn.ReLU(),
+            nn.Dropout(0.5),
 
-            nn.Linear(512, 128),
-            nn.ReLU(),
-
-            nn.Linear(128, num_classes),
-            nn.Sigmoid()
+            nn.Linear(256, num_classes),
+            nn.Sigmoid()  # multiclasse independente
         )
 
     def forward(self, x):
-        return self.net(x)
+        return self.model(x)
 
-model = DOACNN().to(device)
+model = CoarseCNN(num_classes).to(device)
 criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-# --------------------- Avaliação ---------------------
-def evaluate_metrics(y_true, y_pred, threshold=0.5):
-    y_bin = (y_pred >= threshold).float()
-    y_true = y_true > 0.5
-
-    TP = (y_bin * y_true).sum(dim=0)
-    FP = (y_bin * (1 - y_true)).sum(dim=0)
-    FN = ((1 - y_bin) * y_true).sum(dim=0)
-    TN = ((1 - y_bin) * (1 - y_true)).sum(dim=0)
-
-    prec = (TP / (TP + FP + 1e-8)).mean().item()
-    rec  = (TP / (TP + FN + 1e-8)).mean().item()
-    f1   = (2 * prec * rec) / (prec + rec + 1e-8)
-    acc  = ((TP + TN) / (TP + TN + FP + FN + 1e-8)).mean().item()
-
-    return acc, prec, rec, f1
-
-def val_loss(model, X, Y):
-    model.eval()
-    with torch.no_grad():
-        losses, preds = [], []
-        for i in range(0, len(X), batch_size):
-            xb = X[i:i+batch_size].to(device)
-            yb = Y[i:i+batch_size].to(device)
-            yp = model(xb)
-            loss = criterion(yp, yb)
-            losses.append(loss.item())
-            preds.append(yp.cpu())
-
-        Y_pred = torch.cat(preds, dim=0)
-        L = np.mean(losses)
-        acc, prec, rec, f1 = evaluate_metrics(Y.cpu(), Y_pred, threshold)
-        return L, Y_pred, acc, prec, rec, f1
-
-# --------------------- Treinamento ---------------------
+# Loop de treino
 best_val_loss = float('inf')
-best_model = None
-pat_count = 0
-train_losses, val_losses, iters = [], [], []
+no_improve = 0
+global_step = 0
 
-total_it = 0
+train_losses, val_losses = [], []
+
 for epoch in range(num_epochs):
     model.train()
-    perm = torch.randperm(N_train)
-    for i in range(0, N_train, batch_size):
-        total_it += 1
-        idx = perm[i:i+batch_size]
-        xb = X_train[idx].to(device)
-        yb = Y_train[idx].to(device)
+    for xb, yb in train_loader:
+        xb, yb = xb.to(device), yb.to(device)
+
+        pred = model(xb)
+        loss = criterion(pred, yb)
 
         optimizer.zero_grad()
-        y_pred = model(xb)
-        loss = criterion(y_pred, yb)
         loss.backward()
         optimizer.step()
 
-        if total_it % val_freq == 0:
-            val_loss_val, Ypred_val, acc, prec, rec, f1 = val_loss(model, X_val, Y_val)
-            print(f"Ep {epoch+1:2d} | It {total_it:5d} | Train {loss.item():.4f} | Val {val_loss_val:.4f} | Acc {acc:.3f} | Prec {prec:.3f} | Rec {rec:.3f} | F1 {f1:.3f}")
-            
-            train_losses.append(loss.item())
-            val_losses.append(val_loss_val)
-            iters.append(total_it)
+        global_step += 1
 
-            if val_loss_val < best_val_loss:
-                best_val_loss = val_loss_val
-                best_model = model.state_dict()
-                pat_count = 0
+        if global_step % val_freq == 0:
+            model.eval()
+            val_loss = 0
+            preds_all, targets_all = [], []
+            with torch.no_grad():
+                for xvb, yvb in val_loader:
+                    xvb, yvb = xvb.to(device), yvb.to(device)
+                    pred_v = model(xvb)
+                    loss_v = criterion(pred_v, yvb)
+                    val_loss += loss_v.item()
+                    preds_all.append(pred_v.cpu().numpy())
+                    targets_all.append(yvb.cpu().numpy())
+
+            val_loss /= len(val_loader)
+            preds_all = np.concatenate(preds_all)
+            targets_all = np.concatenate(targets_all)
+
+            pred_bin = preds_all >= 0.5
+            acc  = np.mean((pred_bin == targets_all).astype(float))
+            prec = precision_score(targets_all, pred_bin, average='macro', zero_division=0)
+            rec  = recall_score(targets_all, pred_bin, average='macro', zero_division=0)
+            f1   = f1_score(targets_all, pred_bin, average='macro', zero_division=0)
+
+            print(f"Ep {epoch+1} | Step {global_step} | Train {loss.item():.4f} | Val {val_loss:.4f} | Acc {acc:.3f} | Prec {prec:.3f} | Rec {rec:.3f} | F1 {f1:.3f}")
+
+            train_losses.append(loss.item())
+            val_losses.append(val_loss)
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                no_improve = 0
+                torch.save(model.state_dict(), "coarseDOA_net.pth")
             else:
-                pat_count += 1
-                if pat_count >= patience:
-                    print(f"Early stopping na época {epoch+1}")
+                no_improve += 1
+                if no_improve >= patience:
+                    print(f"Early stopping na época {epoch+1}.")
                     break
-    if pat_count >= patience:
+    if no_improve >= patience:
         break
 
-# --------------------- Salvar modelo ---------------------
-torch.save(best_model, 'coarseDOA_net.pt')
-print(f'Modelo salvo (ValLoss={best_val_loss:.4f})')
+print(f"Modelo salvo (ValLoss={best_val_loss:.4f})")
 
-# --------------------- Plotar perda ---------------------
-plt.figure()
-plt.plot(iters, train_losses, '-b', label='train')
-plt.plot(iters, val_losses, '-r', label='val')
-plt.xlabel('iteration')
-plt.ylabel('loss')
+plt.figure(figsize=(10, 5))
+plt.plot(train_losses, label='Train Loss', linewidth=1.8)
+plt.plot(val_losses, label='Validation Loss', linewidth=1.8)
+plt.xlabel('Validação periódica (x200 iterações)')
+plt.ylabel('Loss (BCE)')
+plt.title('Curva de Perda - coarseDOA')
 plt.legend()
-plt.title('Loss × iteration')
 plt.grid(True)
+plt.tight_layout()
+plt.savefig("loss_curve.png", dpi=150)
 plt.show()
+
