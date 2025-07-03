@@ -41,7 +41,7 @@ Y_all = np.concatenate(Y_all, axis=1)  # → [12, total]
 # Separar treino/validação
 X = X_all.transpose(3, 2, 0, 1)  # → [N, 3, 10, 10]
 Y = Y_all.T                     # → [N, 12]
-X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.1, random_state=42)
+X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.01, random_state=42)
 
 X_train = torch.tensor(X_train, dtype=torch.float32)
 Y_train = torch.tensor(Y_train, dtype=torch.float32)
