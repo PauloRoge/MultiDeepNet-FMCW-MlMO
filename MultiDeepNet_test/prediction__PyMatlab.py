@@ -1,3 +1,4 @@
+# gera os sinais recebidos (Y) no MATLAB
 import torch
 import torch.nn as nn
 import numpy as np

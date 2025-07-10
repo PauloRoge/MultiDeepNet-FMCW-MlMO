@@ -11,7 +11,7 @@ snapshots   = 10;                   % N = número de snapshots
 SNRdB_list  = -10:2:15;             % Intervalo de SNRs usado no artigo
 
 nSamples    = 100000;                  % Número de amostras por SNR (artigo usa 500 mil)
-maxSources  = 3;                    % K ~ Uniforme de 1 a 6 alvos
+maxSources  = 3;                    % K ~ Uniforme de 1 a 3 alvos
 
 %% Configuração coarse-DOA
 edgesCoarse = linspace(-60, 60, 13); % 12 bins de 10° para estimação coarse
