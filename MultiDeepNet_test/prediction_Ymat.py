@@ -107,15 +107,30 @@ print(f"\n[INFO] Setores detectados (prob > 0.5): {detected.tolist()}")
 # --------------------------
 # 8. Plot gráfico de barras
 # --------------------------
-plt.figure(figsize=(10, 4))
-plt.bar(setores, probs, width=9, color='royalblue', edgecolor='k')
+# Extrair ângulos e distâncias reais dos usuários (a partir dos objetos matlab.double)
+AoA_list  = list(AoA._data)
+dist_list = list(dist._data)
+
+# Criar rótulos combinando ângulo e distância
+label_user = ', '.join([f'{ang:.2f}° ({d:.1f} m)' for ang, d in zip(AoA_list, dist_list)])
+
+# Plotagem
+plt.figure(figsize=(10, 3))
+plt.bar(setores, probs, width=9, color='royalblue', edgecolor='k', label='Saída da rede')
 plt.axhline(0.5, color='r', linestyle='--', label='Threshold 0.5')
+
+# Linhas verticais nas posições dos usuários
+for ang in AoA_list:
+    plt.axvline(x=ang, color='g', linestyle='-.', linewidth=1.5)
+
+# Legenda com ângulos e distâncias
+plt.legend(title=f'Usuários: {label_user}')
+
 plt.xticks(setores)
 plt.xlabel('Ângulo (graus)')
 plt.ylabel('Probabilidade')
 plt.title('Saída coarseDOA por setor (–60° a 60°)')
 plt.grid(True, axis='y', linestyle=':')
-plt.legend()
 plt.tight_layout()
 plt.savefig('predicao_coarseDOA.png', dpi=150)
 plt.show()
